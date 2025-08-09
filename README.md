@@ -29,7 +29,7 @@ uv run python -m typewhisper
 
 ```powershell
 cd C:\python\typewhisper
-uv tool install --force .
+uv tool install --force .[cuda]
 
 # проверка
 Get-Command typewhisper
@@ -40,7 +40,7 @@ typewhisper --help
 
 ```powershell
 cd C:\python\typewhisper
-uv tool install --force .
+uv tool install --force .[cuda]
 ```
 
 Удаление глобальной команды:
@@ -65,7 +65,7 @@ typewhisper --model MODEL --device {auto|cpu|cuda} --compute {auto|int8|float16|
 ```
 - `--model` (по умолчанию `small`): `tiny|base|small|medium|large-v3|distil-large-v3` и др.
 - `--device` (по умолчанию `auto`): `auto|cpu|cuda` (auto выбирает CUDA при доступности)
-- `--compute` (по умолчанию `auto`): `auto|int8|float16|int8_float16|float32` (auto: cpu→int8, cuda→float16)
+- `--compute` (по умолчанию `auto`): `auto|int8|float16|int8_float16|float32` (auto: cpu->int8, cuda->float16)
 - `--lang` (например `ru`, `en`), по умолчанию авто
 - `--vad` — фильтрация тишины (Silero VAD)
 

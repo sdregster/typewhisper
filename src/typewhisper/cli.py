@@ -11,17 +11,17 @@
 from __future__ import annotations
 
 import argparse
-import sys
-import threading
-import time
-from typing import Any, Dict, List, Optional
-
+import glob
 import os
 import platform
 import shutil
-import subprocess
-import glob
 import site
+import subprocess
+import sys
+import threading
+import time
+import warnings
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -30,6 +30,7 @@ try:
 except Exception as exc:  # noqa: BLE001
     print("[Ошибка] Не удалось импортировать sounddevice:", exc)
     sys.exit(1)
+
 
 def _augment_path_for_cuda_dlls() -> None:
     """Добавляет в PATH типичные каталоги с CUDA/cuDNN DLL на Windows.
@@ -45,9 +46,7 @@ def _augment_path_for_cuda_dlls() -> None:
     candidate_dirs: List[str] = []
 
     # Program Files cuDNN
-    candidate_dirs.extend(
-        glob.glob(r"C:\\Program Files\\NVIDIA\\CUDNN\\v*\\bin\\*")
-    )
+    candidate_dirs.extend(glob.glob(r"C:\\Program Files\\NVIDIA\\CUDNN\\v*\\bin\\*"))
 
     # CUDA Toolkit bin
     candidate_dirs.extend(
@@ -95,6 +94,17 @@ except Exception:
     pass
 
 try:
+    # Подавляем известный UserWarning из ctranslate2 (pkg_resources deprecation)
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module=r"ctranslate2(\.|$)",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        message=r"pkg_resources is deprecated as an API.*",
+    )
     from faster_whisper import WhisperModel
 except Exception as exc:  # noqa: BLE001
     print("[Ошибка] Не удалось импортировать faster-whisper:", exc)
@@ -148,7 +158,9 @@ class AudioRecorder:
         self._stream: Optional[sd.InputStream] = None
         self._active = False
 
-    def _callback(self, indata: np.ndarray, frames: int, time_info: Dict[str, float], status: Any) -> None:
+    def _callback(
+        self, indata: np.ndarray, frames: int, time_info: Dict[str, float], status: Any
+    ) -> None:
         """Колбэк аудиопотока. Складывает копии входящих кадров в буфер.
 
         Параметры соответствуют сигнатуре колбэка `sounddevice.InputStream`.
@@ -345,9 +357,13 @@ def run_diagnostics(preferred_device: str, preferred_compute: str) -> None:
         print(f"  torch import failed: {exc}")
 
     print("[Diag] Рекомендации:")
-    print("  - Для GPU запустите: --device cuda (compute по умолчанию auto→float16)")
-    print("  - Убедитесь, что PyTorch с поддержкой CUDA установлен и совпадает с версией CUDA драйвера")
-    print("  - Примеры команд установки PyTorch под CUDA см. обсуждение Whisper (GitHub Discussions #47)")
+    print("  - Для GPU запустите: --device cuda (compute по умолчанию auto->float16)")
+    print(
+        "  - Убедитесь, что PyTorch с поддержкой CUDA установлен и совпадает с версией CUDA драйвера"
+    )
+    print(
+        "  - Примеры команд установки PyTorch под CUDA см. обсуждение Whisper (GitHub Discussions #47)"
+    )
 
 
 def _register_hotkeys(on_toggle: Any, on_quit: Any) -> None:
@@ -365,7 +381,9 @@ def _register_hotkeys(on_toggle: Any, on_quit: Any) -> None:
 
 def _print_shortcuts() -> None:
     """Печатает список горячих клавиш."""
-    print("\nГотово. Горячие клавиши:\n  Ctrl+Alt+H — старт/стоп записи\n  Ctrl+Alt+Q — выход\n")
+    print(
+        "\nГотово. Горячие клавиши:\n  Ctrl+Alt+H — старт/стоп записи\n  Ctrl+Alt+Q — выход\n"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -385,7 +403,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--compute",
         default="auto",
-        help="Тип вычислений: auto|int8|float16|int8_float16|float32 (auto: cpu→int8, cuda→float16)",
+        help="Тип вычислений: auto|int8|float16|int8_float16|float32 (auto: cpu->int8, cuda->float16)",
     )
     parser.add_argument(
         "--lang", default=None, help="Код языка (напр. ru, en); по умолчанию авто"
@@ -409,10 +427,19 @@ def main() -> None:
         run_diagnostics(preferred_device=args.device, preferred_compute=args.compute)
         return
 
-    resolved_device = _resolve_device(args.device)
-
     try:
-        model = build_model(args.model, resolved_device, args.compute)
+        if args.device.lower() == "auto":
+            print("[Устройство] Автоопределение: пробую CUDA…")
+            try:
+                model = build_model(args.model, "cuda", args.compute)
+                print("[Устройство] Выбрано: cuda")
+            except Exception as cuda_exc:  # noqa: BLE001
+                print("[Устройство] CUDA недоступна, переключаюсь на CPU:", cuda_exc)
+                model = build_model(args.model, "cpu", args.compute)
+                print("[Устройство] Выбрано: cpu")
+        else:
+            model = build_model(args.model, _resolve_device(args.device), args.compute)
+            print(f"[Устройство] Выбрано: {args.device}")
     except Exception as exc:  # noqa: BLE001
         print("[Ошибка] Не удалось инициализировать модель: ", exc)
         sys.exit(1)
