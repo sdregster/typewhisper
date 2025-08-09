@@ -61,11 +61,11 @@ uv tool uninstall typewhisper
 
 ### Параметры запуска
 ```powershell
-typewhisper --model MODEL --device {cpu|cuda} --compute COMPUTE --lang LANG --vad
+typewhisper --model MODEL --device {auto|cpu|cuda} --compute {auto|int8|float16|int8_float16|float32} --lang LANG --vad
 ```
 - `--model` (по умолчанию `small`): `tiny|base|small|medium|large-v3|distil-large-v3` и др.
-- `--device` (по умолчанию `cpu`): `cpu` или `cuda`
-- `--compute` (CPU: `int8`; GPU: `float16|int8_float16|float32`)
+- `--device` (по умолчанию `auto`): `auto|cpu|cuda` (auto выбирает CUDA при доступности)
+- `--compute` (по умолчанию `auto`): `auto|int8|float16|int8_float16|float32` (auto: cpu→int8, cuda→float16)
 - `--lang` (например `ru`, `en`), по умолчанию авто
 - `--vad` — фильтрация тишины (Silero VAD)
 
@@ -85,3 +85,40 @@ README.md
 
 ### Лицензии
 Whisper и `faster-whisper` — см. соответствующие репозитории.
+
+
+### Модели и очистка скачанных моделей
+
+Рекомендуемые варианты моделей:
+- `tiny`/`base`: очень быстро, ниже качество;
+- `small`: хороший базовый баланс скорость/качество;
+- `distil-large-v3`: лучший баланс (рекомендуется);
+- `large-v3`: максимальное качество, требует больше VRAM/времени.
+
+Примеры запуска:
+```powershell
+typewhisper --model distil-large-v3 --lang ru --vad
+# GPU: автоматически выберется при доступности (или укажите явно)
+typewhisper --device cuda --model large-v3 --lang ru --vad
+```
+
+Где лежат скачанные модели и как их удалить (Windows, PowerShell 7+):
+```powershell
+# Путь к кэшу Hugging Face Hub (по умолчанию):
+$cache = if ($env:HF_HOME) { Join-Path $env:HF_HOME 'hub' } else { Join-Path $env:USERPROFILE '.cache\huggingface\hub' }
+$cache
+
+# Посмотреть модели faster-whisper в кэше:
+Get-ChildItem -Path $cache -Directory -Depth 1 -Filter 'models--*faster-whisper*' | Select-Object FullName
+
+# Удалить только модели faster-whisper:
+Get-ChildItem -Path $cache -Directory -Depth 1 -Filter 'models--*faster-whisper*' | Remove-Item -Recurse -Force
+
+# Полностью очистить кэш Hugging Face (удалит ВСЕ скачанные модели/веса из Hub):
+# Внимание: действие необратимо и затронет и другие проекты
+# Remove-Item -Path $cache -Recurse -Force
+```
+
+Подсказки:
+- Можно задать собственный каталог кэша через переменную окружения `HF_HOME`.
+- Скачанные модели переиспользуются между виртуальными окружениями.

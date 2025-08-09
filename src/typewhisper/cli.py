@@ -16,6 +16,13 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+import os
+import platform
+import shutil
+import subprocess
+import glob
+import site
+
 import numpy as np
 
 try:
@@ -23,6 +30,69 @@ try:
 except Exception as exc:  # noqa: BLE001
     print("[Ошибка] Не удалось импортировать sounddevice:", exc)
     sys.exit(1)
+
+def _augment_path_for_cuda_dlls() -> None:
+    """Добавляет в PATH типичные каталоги с CUDA/cuDNN DLL на Windows.
+
+    Ищем каталоги наподобие:
+      - Program Files\\NVIDIA\\CUDNN\\v*\\bin\\*
+      - Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin
+      - site-packages/nvidia/{cudnn,cublas,cuda_runtime,nvrtc}/bin
+    """
+    if platform.system() != "Windows":
+        return
+
+    candidate_dirs: List[str] = []
+
+    # Program Files cuDNN
+    candidate_dirs.extend(
+        glob.glob(r"C:\\Program Files\\NVIDIA\\CUDNN\\v*\\bin\\*")
+    )
+
+    # CUDA Toolkit bin
+    candidate_dirs.extend(
+        glob.glob(r"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v*\\bin")
+    )
+
+    # Python-installed NVIDIA runtime packages
+    site_dirs = []
+    try:
+        site_dirs.extend(site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        site_dirs.append(site.getusersitepackages())
+    except Exception:
+        pass
+    for base in site_dirs:
+        for sub in [
+            os.path.join(base, "nvidia", "cudnn", "bin"),
+            os.path.join(base, "nvidia", "cublas", "bin"),
+            os.path.join(base, "nvidia", "cuda_runtime", "bin"),
+            os.path.join(base, "nvidia", "nvrtc", "bin"),
+        ]:
+            candidate_dirs.append(sub)
+
+    # Уникализируем и фильтруем существующие
+    existing = []
+    seen = set()
+    for d in candidate_dirs:
+        if d and os.path.isdir(d) and d not in seen:
+            existing.append(d)
+            seen.add(d)
+
+    if not existing:
+        return
+
+    current = os.environ.get("PATH", "")
+    new_path = ";".join(existing + [current]) if current else ";".join(existing)
+    os.environ["PATH"] = new_path
+
+
+try:
+    _augment_path_for_cuda_dlls()
+except Exception:
+    pass
 
 try:
     from faster_whisper import WhisperModel
@@ -147,12 +217,52 @@ def paste_text_via_clipboard(text: str) -> None:
     keyboard.press_and_release("ctrl+v")
 
 
+def _resolve_compute_type(device: str, compute: str) -> str:
+    """Возвращает подходящий compute_type.
+
+    - auto: cpu→int8, cuda→float16
+    - иначе возвращает указанное значение
+    """
+    if compute.lower() == "auto":
+        return "float16" if device.lower() == "cuda" else "int8"
+    return compute
+
+
+def _cuda_is_available() -> bool:
+    """Проверяет доступность CUDA для CTranslate2 упрощённо.
+
+    На Windows пытается загрузить ключевые DLL (cudart и cuDNN).
+    На других ОС возвращает True, чтобы не блокировать авто-режим.
+    """
+    if platform.system() != "Windows":
+        return True
+    try:
+        import ctypes  # noqa: WPS433
+
+        for name in ("cudart64_12.dll", "cudnn_ops64_9.dll"):
+            try:
+                ctypes.WinDLL(name)
+            except Exception:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _resolve_device(device: str) -> str:
+    """Определяет устройство при значении auto."""
+    if device.lower() != "auto":
+        return device
+    return "cuda" if _cuda_is_available() else "cpu"
+
+
 def build_model(model_name: str, device: str, compute: str) -> WhisperModel:
     """Создаёт и настраивает модель Whisper."""
+    resolved_compute = _resolve_compute_type(device, compute)
     print(
-        f"[Модель] Загрузка: model={model_name}, device={device}, compute={compute} ..."
+        f"[Модель] Загрузка: model={model_name}, device={device}, compute={resolved_compute} ..."
     )
-    model = WhisperModel(model_name, device=device, compute_type=compute)
+    model = WhisperModel(model_name, device=device, compute_type=resolved_compute)
     print("[Модель] Готово")
     return model
 
@@ -181,8 +291,85 @@ def transcribe_audio(
     return text.strip()
 
 
-def main() -> None:
-    """Точка входа CLI."""
+def _safe_run(cmd: List[str]) -> str:
+    """Возвращает stdout команды или пустую строку."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return (out.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+def run_diagnostics(preferred_device: str, preferred_compute: str) -> None:
+    """Печатает диагностику окружения для GPU/CUDA и выходит.
+
+    Показывает базовую системную информацию, наличие `nvidia-smi`,
+    доступность CUDA в PyTorch (как индикатор корректной CUDA-цепочки),
+    а также рекомендуемые флаги запуска для faster-whisper.
+    """
+    print("[Diag] Система:")
+    print(f"  OS: {platform.system()} {platform.release()} ({platform.version()})")
+    print(f"  Python: {platform.python_version()}")
+    print(f"  Preferred device: {preferred_device}")
+    resolved = _resolve_compute_type(preferred_device, preferred_compute)
+    print(f"  Preferred compute: {preferred_compute} -> {resolved}")
+
+    exe = shutil.which("nvidia-smi")
+    print("[Diag] nvidia-smi:")
+    if exe:
+        out = _safe_run([exe])
+        print("  found in PATH")
+        if out:
+            head = "\n".join(out.splitlines()[:6])
+            print("  output:")
+            print("  " + head.replace("\n", "\n  "))
+    else:
+        print("  not found in PATH")
+
+    print("[Diag] PyTorch CUDA:")
+    try:
+        import torch  # type: ignore
+
+        print(f"  torch: {torch.__version__}")
+        print(f"  cuda.is_available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            try:
+                count = torch.cuda.device_count()
+                print(f"  cuda.device_count: {count}")
+                for idx in range(count):
+                    name = torch.cuda.get_device_name(idx)
+                    print(f"  device[{idx}]: {name}")
+            except Exception:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        print(f"  torch import failed: {exc}")
+
+    print("[Diag] Рекомендации:")
+    print("  - Для GPU запустите: --device cuda (compute по умолчанию auto→float16)")
+    print("  - Убедитесь, что PyTorch с поддержкой CUDA установлен и совпадает с версией CUDA драйвера")
+    print("  - Примеры команд установки PyTorch под CUDA см. обсуждение Whisper (GitHub Discussions #47)")
+
+
+def _register_hotkeys(on_toggle: Any, on_quit: Any) -> None:
+    """Регистрирует глобальные горячие клавиши и обрабатывает возможные ошибки."""
+    try:
+        keyboard.add_hotkey("ctrl+alt+h", on_toggle, suppress=False)
+        keyboard.add_hotkey("ctrl+alt+q", on_quit, suppress=False)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            "[Ошибка] Регистрация горячих клавиш не удалась. Попробуйте запустить PowerShell от имени администратора.\n",
+            exc,
+        )
+        sys.exit(1)
+
+
+def _print_shortcuts() -> None:
+    """Печатает список горячих клавиш."""
+    print("\nГотово. Горячие клавиши:\n  Ctrl+Alt+H — старт/стоп записи\n  Ctrl+Alt+Q — выход\n")
+
+
+def _parse_args() -> argparse.Namespace:
+    """Создаёт и парсит аргументы командной строки."""
     parser = argparse.ArgumentParser(description="Локальный диктовщик (Whisper)")
     parser.add_argument(
         "--model",
@@ -190,12 +377,15 @@ def main() -> None:
         help="Имя модели (напр. small, base, large-v3, distil-large-v3)",
     )
     parser.add_argument(
-        "--device", default="cpu", choices=["cpu", "cuda"], help="Устройство: cpu|cuda"
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Устройство: auto|cpu|cuda (auto: попытка использовать CUDA, иначе CPU)",
     )
     parser.add_argument(
         "--compute",
-        default="int8",
-        help="Тип вычислений (cpu: int8; gpu: float16/int8_float16/float32)",
+        default="auto",
+        help="Тип вычислений: auto|int8|float16|int8_float16|float32 (auto: cpu→int8, cuda→float16)",
     )
     parser.add_argument(
         "--lang", default=None, help="Код языка (напр. ru, en); по умолчанию авто"
@@ -203,10 +393,26 @@ def main() -> None:
     parser.add_argument(
         "--vad", action="store_true", help="Фильтровать тишину (Silero VAD)"
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--diag",
+        action="store_true",
+        help="Режим диагностики GPU/окружения и выход",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Точка входа CLI."""
+    args = _parse_args()
+
+    if args.diag:
+        run_diagnostics(preferred_device=args.device, preferred_compute=args.compute)
+        return
+
+    resolved_device = _resolve_device(args.device)
 
     try:
-        model = build_model(args.model, args.device, args.compute)
+        model = build_model(args.model, resolved_device, args.compute)
     except Exception as exc:  # noqa: BLE001
         print("[Ошибка] Не удалось инициализировать модель: ", exc)
         sys.exit(1)
@@ -251,20 +457,8 @@ def main() -> None:
         time.sleep(0.1)
         sys.exit(0)
 
-    # Регистрируем глобальные горячие клавиши
-    try:
-        keyboard.add_hotkey("ctrl+alt+h", toggle_recording, suppress=False)
-        keyboard.add_hotkey("ctrl+alt+q", quit_app, suppress=False)
-    except Exception as exc:  # noqa: BLE001
-        print(
-            "[Ошибка] Регистрация горячих клавиш не удалась. Попробуйте запустить PowerShell от имени администратора.\n",
-            exc,
-        )
-        sys.exit(1)
-
-    print(
-        "\nГотово. Горячие клавиши:\n  Ctrl+Alt+H — старт/стоп записи\n  Ctrl+Alt+Q — выход\n"
-    )
+    _register_hotkeys(toggle_recording, quit_app)
+    _print_shortcuts()
     # Ожидаем выхода
     keyboard.wait()
 
