@@ -1,0 +1,121 @@
+# ---------------------------------------------
+# Игнор для Python-проекта (универсальный)
+# Комментарии на русском для удобства команды
+# ---------------------------------------------
+
+# === Базовое от Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+
+# === Сборка и дистрибутивы ===
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Логи установщика ===
+pip-log.txt
+pip-delete-this-directory.txt
+
+# === Отчёты тестов и покрытия ===
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# === Jupyter/IPython ===
+.ipynb_checkpoints
+profile_default/
+.ipython/
+
+# === Управление версиями интерпретатора ===
+.python-version
+
+# === PDM (если не используется — не помешает) ===
+.pdm.toml
+.pdm-python
+__pypackages__/
+
+# === Celery ===
+celerybeat-schedule
+celerybeat.pid
+
+# === Dotenv (секреты и локальные переменные окружения) ===
+.env
+.env.*
+.env.local
+.envrc
+
+# === Виртуальные окружения ===
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# === Типизация и анализаторы ===
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# === Cython ===
+cython_debug/
+
+# === Логи и временные файлы ===
+*.log
+logs/
+*.tmp
+*.temp
+
+# === Локальные БД ===
+*.sqlite3
+*.db
+
+# === ОС-специфичное ===
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# === IDE/редакторы ===
+.cursor/
+.cursorrules
+.vscode/
+.idea/
+*.iml
+*.swp
+*~
+
+# === Прочие инструменты сборки/доков (на будущее) ===
+.pybuilder/
+target/
+site/
+

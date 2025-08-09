@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "typewhisper"
+version = "0.1.0"
+description = "Простой локальный диктовщик на базе faster-whisper с глобальной горячей клавишей для вставки текста."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{ name = "sdregster" }]
+dependencies = [
+  "faster-whisper>=1.0.0",
+  "sounddevice>=0.4.6",
+  "numpy>=1.24.0",
+  "keyboard>=0.13.5",
+  "pyperclip>=1.8.2",
+]
+
+[project.scripts]
+typewhisper = "typewhisper.cli:main"
+
+[dependency-groups]
+dev = [
+  "ruff",
+  "pytest",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/typewhisper"]
